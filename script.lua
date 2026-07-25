@@ -105,147 +105,164 @@ local function teleportTo(instance)
     end
 end
 
--- Find Tape Type function (scans both names and billboard text labels)
-local function teleportToTapeType(typeName)
-    local found = nil
-    
-    -- Check names
-    for _, v in ipairs(workspace:GetDescendants()) do
-        if v:IsA("Model") or v:IsA("BasePart") then
-            if string.find(string.lower(v.Name), string.lower(typeName)) then
-                found = v
-                break
+-- Get all active breakable tapes/brainrots via proximity prompts
+local function getTapes()
+    local tapes = {}
+    for _, prompt in ipairs(workspace:GetDescendants()) do
+        if prompt:IsA("ProximityPrompt") then
+            local action = string.lower(prompt.ActionText)
+            local object = string.lower(prompt.ObjectText)
+            local parent = prompt.Parent
+            
+            -- Exclude store elements, gamepass unlocks, rebirth pads, portals
+            if not string.find(action, "buy") and not string.find(action, "open") and 
+               not string.find(action, "unlock") and not string.find(action, "rebirth") and 
+               not string.find(object, "shop") and not string.find(object, "gamepass") then
+                table.insert(tapes, {
+                    prompt = prompt,
+                    parent = parent,
+                    name = parent.Name,
+                    objectText = prompt.ObjectText,
+                    actionText = prompt.ActionText
+                })
             end
         end
     end
+    return tapes
+end
+
+-- Parse numerical reward value of a tape
+local function getTapeValue(tape)
+    local text = string.lower(tape.objectText .. " " .. tape.actionText .. " " .. tape.name)
+    local val = 0
+    local clean = string.gsub(text, "[$,+]", "")
     
-    -- Check BillboardGui labels if not found by name
-    if not found then
-        for _, v in ipairs(workspace:GetDescendants()) do
-            if v:IsA("BillboardGui") then
-                for _, tl in ipairs(v:GetDescendants()) do
-                    if tl:IsA("TextLabel") and string.find(string.lower(tl.Text), string.lower(typeName)) then
-                        local parent = v.Adornee or v.Parent
-                        if parent and (parent:IsA("BasePart") or parent:IsA("Model")) then
-                            found = parent
-                            break
-                        end
-                    end
-                end
-            end
-            if found then break end
+    local num, suffix = string.match(clean, "(%d+%.?%d*)([kmb]?)")
+    if num then
+        val = tonumber(num) or 0
+        if suffix == "k" then
+            val = val * 1000
+        elseif suffix == "m" then
+            val = val * 1000000
+        elseif suffix == "b" then
+            val = val * 1000000000
         end
     end
-    
-    if found then
-        teleportTo(found)
-    end
+    return val
 end
 
 -- Find Best Earnings function
 local function teleportToBestEarnings()
-    local bestTape = nil
-    local maxEarnings = -1
-    
-    for _, v in ipairs(workspace:GetDescendants()) do
-        if v:IsA("Model") or v:IsA("BasePart") then
-            local isTape = false
-            local earnings = 0
-            
-            -- Method 1: Check Attributes
-            local attReward = v:GetAttribute("Reward") or v:GetAttribute("Cash") or v:GetAttribute("Earnings") or v:GetAttribute("Value")
-            if attReward then
-                isTape = true
-                earnings = tonumber(attReward) or 0
-            end
-            
-            -- Method 2: Check Value Instances
-            if not isTape then
-                local valObj = v:FindFirstChild("Reward") or v:FindFirstChild("Cash") or v:FindFirstChild("Earnings") or v:FindFirstChild("Value")
-                if valObj and (valObj:IsA("NumberValue") or valObj:IsA("IntValue")) then
-                    isTape = true
-                    earnings = valObj.Value
-                end
-            end
-            
-            -- Method 3: Check BillboardGuis
-            if not isTape then
-                local bbgui = v:FindFirstChildOfClass("BillboardGui")
-                if bbgui then
-                    for _, tl in ipairs(bbgui:GetDescendants()) do
-                        if tl:IsA("TextLabel") then
-                            local txt = tl.Text
-                            local cleanTxt = string.gsub(txt, "[$,+]", "")
-                            local num = tonumber(cleanTxt)
-                            if num then
-                                isTape = true
-                                earnings = num
-                            elseif string.find(string.lower(txt), "k") then
-                                local base = tonumber(string.gsub(string.lower(txt), "k", ""))
-                                if base then
-                                    isTape = true
-                                    earnings = base * 1000
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            
-            -- Fallback Check
-            if not isTape then
+    local tapes = getTapes()
+    if #tapes == 0 then
+        -- Fallback to workspace elements if no prompts are found
+        local foundFallback = nil
+        for _, v in ipairs(workspace:GetDescendants()) do
+            if v:IsA("Model") or v:IsA("BasePart") then
                 local name = string.lower(v.Name)
                 if string.find(name, "tape") or string.find(name, "brainrot") then
-                    isTape = true
-                    earnings = 1
-                end
-            end
-            
-            if isTape and earnings > maxEarnings then
-                local part = v:IsA("BasePart") and v or (v:FindFirstChildOfClass("BasePart") or v.PrimaryPart)
-                if part then
-                    maxEarnings = earnings
-                    bestTape = v
+                    foundFallback = v
+                    break
                 end
             end
         end
+        if foundFallback then
+            teleportTo(foundFallback)
+            pcall(function()
+                game:GetService("StarterGui"):SetCore("SendNotification", {
+                    Title = "Bloxlord",
+                    Text = "Teleported to tape/brainrot fallback",
+                    Duration = 2
+                })
+            end)
+        else
+            pcall(function()
+                game:GetService("StarterGui"):SetCore("SendNotification", {
+                    Title = "Bloxlord",
+                    Text = "No tapes/brainrots found!",
+                    Duration = 2
+                })
+            end)
+        end
+        return
     end
     
-    if bestTape then
-        teleportTo(bestTape)
-        pcall(function()
-            game:GetService("StarterGui"):SetCore("SendNotification", {
-                Title = "Bloxlord",
-                Text = "Teleported to best earnings tape (" .. tostring(maxEarnings) .. ")",
-                Duration = 2
-            })
-        end)
-    else
-        pcall(function()
-            game:GetService("StarterGui"):SetCore("SendNotification", {
-                Title = "Bloxlord",
-                Text = "No tape/brainrot found!",
-                Duration = 2
-            })
-        end)
+    -- Sort by parsed earnings, then by distance from spawn (further = higher zone)
+    table.sort(tapes, function(a, b)
+        local valA = getTapeValue(a)
+        local valB = getTapeValue(b)
+        if valA ~= valB then
+            return valA > valB
+        else
+            local posA = a.parent:IsA("BasePart") and a.parent.Position or (a.parent.PrimaryPart and a.parent.PrimaryPart.Position or Vector3.new(0,0,0))
+            local posB = b.parent:IsA("BasePart") and b.parent.Position or (b.parent.PrimaryPart and b.parent.PrimaryPart.Position or Vector3.new(0,0,0))
+            return posA.Magnitude > posB.Magnitude
+        end
+    end)
+    
+    local best = tapes[1]
+    teleportTo(best.parent)
+    pcall(function()
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "Bloxlord",
+            Text = "Teleported to: " .. best.name .. " (" .. tostring(getTapeValue(best)) .. ")",
+            Duration = 2
+        })
+    end)
+end
+
+-- Universal Remote Fire function
+local function fireRemoteByName(targetName, ...)
+    local args = {...}
+    for _, v in ipairs(ReplicatedStorage:GetDescendants()) do
+        if (v:IsA("RemoteEvent") or v:IsA("RemoteFunction")) and string.lower(v.Name) == string.lower(targetName) then
+            pcall(function()
+                if v:IsA("RemoteEvent") then
+                    v:FireServer(unpack(args))
+                else
+                    v:InvokeServer(unpack(args))
+                end
+            end)
+        end
     end
 end
 
--- Collect Cash function
+-- Collect Cash function (Combines touch interests and proximity prompts)
 local function collectCash()
     if not LocalPlayer.Character then return end
     local hrp = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
     
+    -- Touch collectible parts
     for _, v in ipairs(workspace:GetDescendants()) do
-        if v:IsA("BasePart") and (string.find(string.lower(v.Name), "cash") or string.find(string.lower(v.Name), "coin") or string.find(string.lower(v.Name), "money")) then
-            if v:FindFirstChildOfClass("TouchTransmitter") or v.Name == "Cash" or v.Name == "Coin" then
+        if v:IsA("BasePart") then
+            local name = string.lower(v.Name)
+            local parentName = v.Parent and string.lower(v.Parent.Name) or ""
+            if string.find(name, "cash") or string.find(parentName, "cash") or 
+               string.find(name, "coin") or string.find(parentName, "coin") or 
+               string.find(name, "money") or string.find(name, "drop") or string.find(parentName, "drop") then
                 if firetouchinterest then
                     firetouchinterest(hrp, v, 0)
                     task.wait()
                     firetouchinterest(hrp, v, 1)
                 else
                     v.CFrame = hrp.CFrame
+                end
+            end
+        end
+    end
+    
+    -- Interact with collectible prompts
+    for _, prompt in ipairs(workspace:GetDescendants()) do
+        if prompt:IsA("ProximityPrompt") then
+            local action = string.lower(prompt.ActionText)
+            local object = string.lower(prompt.ObjectText)
+            local parentName = prompt.Parent and string.lower(prompt.Parent.Name) or ""
+            if string.find(action, "collect") or string.find(action, "cash") or 
+               string.find(object, "cash") or string.find(parentName, "cash") or 
+               string.find(parentName, "money") then
+                if fireproximityprompt then
+                    fireproximityprompt(prompt)
                 end
             end
         end
@@ -271,19 +288,12 @@ local function performUpgradeAll()
     end
     
     -- 2. Remote Fire
-    for _, v in ipairs(ReplicatedStorage:GetDescendants()) do
-        if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
-            local name = string.lower(v.Name)
-            if string.find(name, "upgrade") or string.find(name, "buy") or string.find(name, "purchase") then
-                pcall(function()
-                    v:FireServer("Power")
-                    v:FireServer("Speed")
-                    v:FireServer("Click")
-                    v:FireServer("Damage")
-                    v:FireServer("All")
-                end)
-            end
-        end
+    local stats = {"Power", "Speed", "WalkSpeed", "Click", "Damage", "Strength"}
+    for _, stat in ipairs(stats) do
+        fireRemoteByName("Upgrade", stat)
+        fireRemoteByName("Upgrade", stat, 1)
+        fireRemoteByName("BuyUpgrade", stat)
+        fireRemoteByName("PurchaseUpgrade", stat)
     end
 end
 
@@ -295,27 +305,27 @@ local function performBuyPower()
             if button:IsA("TextButton") or button:IsA("ImageButton") then
                 local text = button:IsA("TextButton") and string.lower(button.Text) or ""
                 local name = string.lower(button.Name)
-                if (string.find(name, "power") or string.find(text, "power")) and (string.find(name, "buy") or string.find(text, "buy") or string.find(name, "upgrade") or string.find(text, "upgrade")) then
+                if (string.find(name, "power") or string.find(text, "power")) and 
+                   (string.find(name, "buy") or string.find(text, "buy") or string.find(name, "upgrade") or string.find(text, "upgrade")) then
                     if getconnections then
-                        for _, con in pairs(getconnections(button.MouseButton1Click)) do con:Fire() end
-                        for _, con in pairs(getconnections(button.Activated)) do con:Fire() end
+                        for i = 1, 10 do
+                            for _, con in pairs(getconnections(button.MouseButton1Click)) do con:Fire() end
+                            for _, con in pairs(getconnections(button.Activated)) do con:Fire() end
+                        end
                     end
                 end
             end
         end
     end
     
-    -- 2. Remote Fire
-    for _, v in ipairs(ReplicatedStorage:GetDescendants()) do
-        if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
-            local name = string.lower(v.Name)
-            if string.find(name, "power") and (string.find(name, "upgrade") or string.find(name, "buy")) then
-                pcall(function()
-                    v:FireServer("Power", 10)
-                    v:FireServer(10)
-                end)
-            end
-        end
+    -- 2. Remote Fire (loops 10 times to purchase exactly +10)
+    for i = 1, 10 do
+        fireRemoteByName("Upgrade", "Power")
+        fireRemoteByName("Upgrade", "Power", 1)
+        fireRemoteByName("Upgrade", "PowerStrength")
+        fireRemoteByName("Upgrade", "Strength")
+        fireRemoteByName("BuyUpgrade", "Power")
+        fireRemoteByName("PurchaseUpgrade", "Power")
     end
 end
 
@@ -338,17 +348,10 @@ local function performRebirth()
     end
     
     -- 2. Remote Fire
-    for _, v in ipairs(ReplicatedStorage:GetDescendants()) do
-        if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
-            local name = string.lower(v.Name)
-            if string.find(name, "rebirth") then
-                pcall(function()
-                    v:FireServer(1)
-                    v:FireServer()
-                end)
-            end
-        end
-    end
+    fireRemoteByName("Rebirth")
+    fireRemoteByName("Rebirth", 1)
+    fireRemoteByName("RebirthRequest")
+    fireRemoteByName("PerformRebirth")
 end
 
 -- Auto Click tool function
@@ -363,6 +366,31 @@ local function autoClick()
     end
     if tool then
         tool:Activate()
+    end
+end
+
+-- Auto fire proximity prompt of the nearest active tape
+local function autoFireClosestPrompt()
+    if not LocalPlayer.Character then return end
+    local hrp = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    
+    local closestPrompt = nil
+    local minDistance = 25 -- max reach distance
+    
+    for _, t in ipairs(getTapes()) do
+        local part = t.parent:IsA("BasePart") and t.parent or (t.parent.PrimaryPart or t.parent:FindFirstChildOfClass("BasePart"))
+        if part then
+            local dist = (hrp.Position - part.Position).Magnitude
+            if dist < minDistance then
+                minDistance = dist
+                closestPrompt = t.prompt
+            end
+        end
+    end
+    
+    if closestPrompt and fireproximityprompt then
+        fireproximityprompt(closestPrompt)
     end
 end
 
@@ -637,10 +665,19 @@ end)
 -- Find OG Loop
 task.spawn(function()
     while true do
-        task.wait(1.5)
+        task.wait(0.5)
         if findOGActive then
             pcall(function()
-                teleportToTapeType("OG")
+                local og = nil
+                for _, t in ipairs(getTapes()) do
+                    if string.find(string.lower(t.name), "og") or string.find(string.lower(t.objectText), "og") then
+                        og = t
+                        break
+                    end
+                end
+                if og then
+                    teleportTo(og.parent)
+                end
             end)
         end
     end
@@ -649,10 +686,19 @@ end)
 -- Find Exclusive Loop
 task.spawn(function()
     while true do
-        task.wait(1.5)
+        task.wait(0.5)
         if findExclusiveActive then
             pcall(function()
-                teleportToTapeType("Exclusive")
+                local exc = nil
+                for _, t in ipairs(getTapes()) do
+                    if string.find(string.lower(t.name), "exclusive") or string.find(string.lower(t.objectText), "exclusive") then
+                        exc = t
+                        break
+                    end
+                end
+                if exc then
+                    teleportTo(exc.parent)
+                end
             end)
         end
     end
@@ -661,7 +707,7 @@ end)
 -- Collect Cash Loop
 task.spawn(function()
     while true do
-        task.wait(0.5)
+        task.wait(0.3)
         if collectCashActive then
             pcall(collectCash)
         end
@@ -691,19 +737,20 @@ end)
 -- Auto Rebirth Loop
 task.spawn(function()
     while true do
-        task.wait(2.5)
+        task.wait(2)
         if autoRebirthActive then
             pcall(performRebirth)
         end
     end
 end)
 
--- Auto Clicker (active during farming modes)
+-- Auto Clicker & Proximity Prompt Trigger (Active during farm modes)
 task.spawn(function()
     while true do
-        task.wait(0.1)
+        task.wait(0.05)
         if findOGActive or findExclusiveActive or upgradeAllActive or buyPower10Active then
             pcall(autoClick)
+            pcall(autoFireClosestPrompt)
         end
     end
 end)
