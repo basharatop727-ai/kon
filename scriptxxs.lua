@@ -105,6 +105,45 @@ local function teleportTo(instance)
     end
 end
 
+-- Find player plot base, deposit pad, or sell point
+local function getBaseOrSellPad()
+    -- Look for common names: "Sell", "Deposit", "Base", "Return", "Dropoff"
+    for _, v in ipairs(workspace:GetDescendants()) do
+        if v:IsA("BasePart") then
+            local name = string.lower(v.Name)
+            if name == "sell" or name == "sellpad" or name == "deposit" or name == "deliver" or name == "dropoff" or name == "sell part" then
+                return v
+            end
+        end
+    end
+    
+    -- If tycoon, check player's plot owner attribute or value
+    for _, v in ipairs(workspace:GetDescendants()) do
+        if v:IsA("Model") or v:IsA("Folder") then
+            local ownerAttr = v:GetAttribute("Owner") or v:GetAttribute("Player")
+            if tostring(ownerAttr) == LocalPlayer.Name or (v:FindFirstChild("Owner") and v.Owner.Value == LocalPlayer) then
+                local pad = v:FindFirstChild("Sell") or v:FindFirstChild("Deposit") or v:FindFirstChild("Base") or v:FindFirstChild("SellPad")
+                if pad then
+                    return pad
+                end
+                local spawnPart = v:FindFirstChild("Spawn") or v:FindFirstChild("BasePart") or v:FindFirstChildOfClass("SpawnLocation")
+                if spawnPart then
+                    return spawnPart
+                end
+            end
+        end
+    end
+    
+    -- Fallback to SpawnLocation
+    for _, v in ipairs(workspace:GetDescendants()) do
+        if v:IsA("SpawnLocation") then
+            return v
+        end
+    end
+    
+    return nil
+end
+
 -- Get all active breakable tapes/brainrots via proximity prompts
 local function getTapes()
     local tapes = {}
@@ -151,7 +190,7 @@ local function getTapeValue(tape)
     return val
 end
 
--- Find Best Earnings function
+-- Find Best Earnings function (Steals best tape, then returns to base)
 local function teleportToBestEarnings()
     local tapes = getTapes()
     if #tapes == 0 then
@@ -168,21 +207,9 @@ local function teleportToBestEarnings()
         end
         if foundFallback then
             teleportTo(foundFallback)
-            pcall(function()
-                game:GetService("StarterGui"):SetCore("SendNotification", {
-                    Title = "Bloxlord",
-                    Text = "Teleported to tape/brainrot fallback",
-                    Duration = 2
-                })
-            end)
-        else
-            pcall(function()
-                game:GetService("StarterGui"):SetCore("SendNotification", {
-                    Title = "Bloxlord",
-                    Text = "No tapes/brainrots found!",
-                    Duration = 2
-                })
-            end)
+            task.wait(3.5)
+            local base = getBaseOrSellPad()
+            if base then teleportTo(base) end
         end
         return
     end
@@ -202,13 +229,30 @@ local function teleportToBestEarnings()
     
     local best = tapes[1]
     teleportTo(best.parent)
+    
     pcall(function()
         game:GetService("StarterGui"):SetCore("SendNotification", {
             Title = "Bloxlord",
-            Text = "Teleported to: " .. best.name .. " (" .. tostring(getTapeValue(best)) .. ")",
+            Text = "Farming best tape: " .. best.name,
             Duration = 2
         })
     end)
+    
+    -- Farm best tape for 3.5 seconds
+    local start = tick()
+    while tick() - start < 3.5 do
+        if fireproximityprompt then
+            pcall(function() fireproximityprompt(best.prompt) end)
+        end
+        pcall(autoClick)
+        task.wait(0.1)
+    end
+    
+    -- Return to base to deliver
+    local base = getBaseOrSellPad()
+    if base then
+        teleportTo(base)
+    end
 end
 
 -- Universal Remote Fire function
@@ -227,13 +271,47 @@ local function fireRemoteByName(targetName, ...)
     end
 end
 
--- Collect Cash function (Combines touch interests and proximity prompts)
+-- Collect Cash function (Collects base tycoon cash generators AND dropped cash on ground)
 local function collectCash()
     if not LocalPlayer.Character then return end
     local hrp = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
     
-    -- Touch collectible parts
+    -- 1. Scan for base cash generators / collectors
+    for _, v in ipairs(workspace:GetDescendants()) do
+        if v:IsA("BasePart") or v:IsA("Model") then
+            local name = string.lower(v.Name)
+            if string.find(name, "collect") or string.find(name, "claim") or 
+               string.find(name, "generator") or string.find(name, "collector") then
+                
+                -- Click Detector trigger
+                local cd = v:FindFirstChildOfClass("ClickDetector")
+                if cd and fireclickdetector then
+                    pcall(function() fireclickdetector(cd) end)
+                end
+                
+                -- Proximity Prompt trigger
+                local prompt = v:FindFirstChildOfClass("ProximityPrompt")
+                if prompt and fireproximityprompt then
+                    pcall(function() fireproximityprompt(prompt) end)
+                end
+                
+                -- Touch interest trigger
+                local part = v:IsA("BasePart") and v or v:FindFirstChildOfClass("BasePart")
+                if part and part:FindFirstChildOfClass("TouchTransmitter") then
+                    if firetouchinterest then
+                        pcall(function()
+                            firetouchinterest(hrp, part, 0)
+                            task.wait()
+                            firetouchinterest(hrp, part, 1)
+                        end)
+                    end
+                end
+            end
+        end
+    end
+    
+    -- 2. Touch collectible floor parts
     for _, v in ipairs(workspace:GetDescendants()) do
         if v:IsA("BasePart") then
             local name = string.lower(v.Name)
@@ -242,14 +320,12 @@ local function collectCash()
                string.find(name, "coin") or string.find(parentName, "coin") or 
                string.find(name, "money") or string.find(name, "drop") or string.find(parentName, "drop") then
                 
-                -- Touch with primary root part
                 if firetouchinterest then
                     pcall(function()
                         firetouchinterest(hrp, v, 0)
                         task.wait()
                         firetouchinterest(hrp, v, 1)
                     end)
-                    -- Touch with foot fallback to satisfy custom collision checks
                     local foot = LocalPlayer.Character:FindFirstChild("LeftFoot") or LocalPlayer.Character:FindFirstChild("Left Leg")
                     if foot then
                         pcall(function()
@@ -259,7 +335,6 @@ local function collectCash()
                         end)
                     end
                 else
-                    -- Teleport physical drop to player character
                     pcall(function()
                         v.Anchored = false
                         v.CanCollide = false
@@ -270,21 +345,13 @@ local function collectCash()
         end
     end
     
-    -- Interact with collectible prompts
-    for _, prompt in ipairs(workspace:GetDescendants()) do
-        if prompt:IsA("ProximityPrompt") then
-            local action = string.lower(prompt.ActionText)
-            local object = string.lower(prompt.ObjectText)
-            local parentName = prompt.Parent and string.lower(prompt.Parent.Name) or ""
-            if string.find(action, "collect") or string.find(action, "cash") or 
-               string.find(object, "cash") or string.find(parentName, "cash") or 
-               string.find(parentName, "money") then
-                if fireproximityprompt then
-                    fireproximityprompt(prompt)
-                end
-            end
-        end
-    end
+    -- 3. Fire common collect/claim RemoteEvents
+    fireRemoteByName("CollectCash")
+    fireRemoteByName("CollectCoins")
+    fireRemoteByName("Collect")
+    fireRemoteByName("Claim")
+    fireRemoteByName("ClaimCash")
+    fireRemoteByName("CollectGenerator")
 end
 
 -- Upgrade All function
@@ -296,6 +363,7 @@ local function performUpgradeAll()
                 local text = button:IsA("TextButton") and string.lower(button.Text) or ""
                 local name = string.lower(button.Name)
                 if string.find(name, "upgrade") or string.find(text, "upgrade") or string.find(name, "buy") or string.find(text, "buy") then
+                    pcall(function() button:Activate() end)
                     if getconnections then
                         for _, con in pairs(getconnections(button.MouseButton1Click)) do con:Fire() end
                         for _, con in pairs(getconnections(button.Activated)) do con:Fire() end
@@ -333,8 +401,9 @@ local function performBuyPower()
                                  string.find(name, "upgrade") or string.find(text, "upgrade")
                                  
                 if isPowerBtn and isBuyBtn then
-                    if getconnections then
-                        for i = 1, 10 do
+                    for i = 1, 10 do
+                        pcall(function() button:Activate() end)
+                        if getconnections then
                             for _, con in pairs(getconnections(button.MouseButton1Click)) do con:Fire() end
                             for _, con in pairs(getconnections(button.Activated)) do con:Fire() end
                         end
@@ -365,6 +434,7 @@ local function performRebirth()
                 local text = button:IsA("TextButton") and string.lower(button.Text) or ""
                 local name = string.lower(button.Name)
                 if string.find(name, "rebirth") or string.find(text, "rebirth") then
+                    pcall(function() button:Activate() end)
                     if getconnections then
                         for _, con in pairs(getconnections(button.MouseButton1Click)) do con:Fire() end
                         for _, con in pairs(getconnections(button.Activated)) do con:Fire() end
@@ -727,7 +797,24 @@ task.spawn(function()
                     end
                 end
                 if og then
+                    -- Teleport to tape
                     teleportTo(og.parent)
+                    -- Farm it for 3 seconds
+                    local start = tick()
+                    while tick() - start < 3 and findOGActive do
+                        if fireproximityprompt then
+                            pcall(function() fireproximityprompt(og.prompt) end)
+                        end
+                        pcall(autoClick)
+                        task.wait(0.1)
+                    end
+                    
+                    -- Return to base to deliver
+                    local base = getBaseOrSellPad()
+                    if base and findOGActive then
+                        teleportTo(base)
+                        task.wait(1.2)
+                    end
                 end
             end)
         end
@@ -748,7 +835,24 @@ task.spawn(function()
                     end
                 end
                 if exc then
+                    -- Teleport to tape
                     teleportTo(exc.parent)
+                    -- Farm it for 3 seconds
+                    local start = tick()
+                    while tick() - start < 3 and findExclusiveActive do
+                        if fireproximityprompt then
+                            pcall(function() fireproximityprompt(exc.prompt) end)
+                        end
+                        pcall(autoClick)
+                        task.wait(0.1)
+                    end
+                    
+                    -- Return to base to deliver
+                    local base = getBaseOrSellPad()
+                    if base and findExclusiveActive then
+                        teleportTo(base)
+                        task.wait(1.2)
+                    end
                 end
             end)
         end
@@ -758,7 +862,7 @@ end)
 -- Collect Cash Loop
 task.spawn(function()
     while true do
-        task.wait(0.3)
+        task.wait(0.5)
         if collectCashActive then
             pcall(collectCash)
         end
