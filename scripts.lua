@@ -241,12 +241,30 @@ local function collectCash()
             if string.find(name, "cash") or string.find(parentName, "cash") or 
                string.find(name, "coin") or string.find(parentName, "coin") or 
                string.find(name, "money") or string.find(name, "drop") or string.find(parentName, "drop") then
+                
+                -- Touch with primary root part
                 if firetouchinterest then
-                    firetouchinterest(hrp, v, 0)
-                    task.wait()
-                    firetouchinterest(hrp, v, 1)
+                    pcall(function()
+                        firetouchinterest(hrp, v, 0)
+                        task.wait()
+                        firetouchinterest(hrp, v, 1)
+                    end)
+                    -- Touch with foot fallback to satisfy custom collision checks
+                    local foot = LocalPlayer.Character:FindFirstChild("LeftFoot") or LocalPlayer.Character:FindFirstChild("Left Leg")
+                    if foot then
+                        pcall(function()
+                            firetouchinterest(foot, v, 0)
+                            task.wait()
+                            firetouchinterest(foot, v, 1)
+                        end)
+                    end
                 else
-                    v.CFrame = hrp.CFrame
+                    -- Teleport physical drop to player character
+                    pcall(function()
+                        v.Anchored = false
+                        v.CanCollide = false
+                        v.CFrame = hrp.CFrame
+                    end)
                 end
             end
         end
@@ -299,14 +317,22 @@ end
 
 -- Buy Power +10 function
 local function performBuyPower()
-    -- 1. Simulated Clicks
+    -- 1. Simulated Clicks (Detects Power, Damage, Strength, or Click buttons)
     if LocalPlayer:FindFirstChild("PlayerGui") then
         for _, button in ipairs(LocalPlayer.PlayerGui:GetDescendants()) do
             if button:IsA("TextButton") or button:IsA("ImageButton") then
                 local text = button:IsA("TextButton") and string.lower(button.Text) or ""
                 local name = string.lower(button.Name)
-                if (string.find(name, "power") or string.find(text, "power")) and 
-                   (string.find(name, "buy") or string.find(text, "buy") or string.find(name, "upgrade") or string.find(text, "upgrade")) then
+                
+                local isPowerBtn = string.find(name, "power") or string.find(text, "power") or
+                                   string.find(name, "damage") or string.find(text, "damage") or
+                                   string.find(name, "strength") or string.find(text, "strength") or
+                                   string.find(name, "click") or string.find(text, "click")
+                                   
+                local isBuyBtn = string.find(name, "buy") or string.find(text, "buy") or 
+                                 string.find(name, "upgrade") or string.find(text, "upgrade")
+                                 
+                if isPowerBtn and isBuyBtn then
                     if getconnections then
                         for i = 1, 10 do
                             for _, con in pairs(getconnections(button.MouseButton1Click)) do con:Fire() end
@@ -318,14 +344,15 @@ local function performBuyPower()
         end
     end
     
-    -- 2. Remote Fire (loops 10 times to purchase exactly +10)
+    -- 2. Remote Fire (loops 10 times to purchase exactly +10 for all potential stat names)
+    local stats = {"Power", "Damage", "Click", "Strength", "PowerStrength"}
     for i = 1, 10 do
-        fireRemoteByName("Upgrade", "Power")
-        fireRemoteByName("Upgrade", "Power", 1)
-        fireRemoteByName("Upgrade", "PowerStrength")
-        fireRemoteByName("Upgrade", "Strength")
-        fireRemoteByName("BuyUpgrade", "Power")
-        fireRemoteByName("PurchaseUpgrade", "Power")
+        for _, stat in ipairs(stats) do
+            fireRemoteByName("Upgrade", stat)
+            fireRemoteByName("Upgrade", stat, 1)
+            fireRemoteByName("BuyUpgrade", stat)
+            fireRemoteByName("PurchaseUpgrade", stat)
+        end
     end
 end
 
@@ -448,7 +475,7 @@ TitleLabel.Parent = Header
 
 -- Subtitle Label "Break Tape For Brainrots"
 local SubtitleLabel = Instance.new("TextLabel")
-SubtitleLabel.Size = UDim2.new(0.5, -15, 1, 0)
+SubtitleLabel.Size = UDim2.new(0.5, -45, 1, 0)
 SubtitleLabel.Position = UDim2.new(0.5, 5, 0, 0)
 SubtitleLabel.BackgroundTransparency = 1
 SubtitleLabel.Text = "Break Tape Brainrots"
@@ -457,6 +484,30 @@ SubtitleLabel.Font = Enum.Font.GothamBold
 SubtitleLabel.TextSize = 9
 SubtitleLabel.TextXAlignment = Enum.TextXAlignment.Right
 SubtitleLabel.Parent = Header
+
+-- Close Button "X"
+local CloseButton = Instance.new("TextButton")
+CloseButton.Name = "CloseButton"
+CloseButton.Size = UDim2.new(0, 20, 0, 20)
+CloseButton.Position = UDim2.new(1, -25, 0.5, -10)
+CloseButton.BackgroundTransparency = 1
+CloseButton.Text = "X"
+CloseButton.TextColor3 = Color3.fromRGB(255, 60, 60)
+CloseButton.Font = Enum.Font.GothamBold
+CloseButton.TextSize = 14
+CloseButton.Parent = Header
+
+CloseButton.MouseButton1Click:Connect(function()
+    ScreenGui:Destroy()
+end)
+
+-- Hover effect for Close Button
+CloseButton.MouseEnter:Connect(function()
+    CloseButton.TextColor3 = Color3.fromRGB(255, 100, 100)
+end)
+CloseButton.MouseLeave:Connect(function()
+    CloseButton.TextColor3 = Color3.fromRGB(255, 60, 60)
+end)
 
 -- Make Frame Draggable using the Header
 makeDraggable(MainFrame, Header)
